@@ -24,6 +24,9 @@ dataset root (no files are moved yet); actual export is a later phase.
 Usage (either works):
     python teleop_data_selector_gui.py --dataset-root <path>
     python -m teleop_data_analyzer.teleop_data_selector_gui --dataset-root <path>
+
+Pass --episode N to launch directly on a specific dataset episode index
+(e.g. --episode 46) instead of the first one.
 """
 from __future__ import annotations
 
@@ -353,11 +356,14 @@ class SelectorWindow(QtWidgets.QMainWindow):
         quat_order: str = "wxyz",
         enable_sim: bool = True,
         enable_metrics: bool = True,
+        start_episode: int | None = None,
     ):
         super().__init__()
         self.dataset = dataset
         self.episodes: list[Episode] = dataset.episodes
-        self.idx = 0  # index into self.episodes
+        # self.idx is a position into self.episodes; start_episode is a dataset
+        # episode index (e.g. 46), which we resolve to its position here.
+        self.idx = self._resolve_start_index(start_episode)
         self.swap = False
         self.playing = True
         self.frame_pos = 0
@@ -614,6 +620,16 @@ class SelectorWindow(QtWidgets.QMainWindow):
         self._update_status()
 
     # ---- navigation / decisions -------------------------------------------
+    def _resolve_start_index(self, start_episode: int | None) -> int:
+        """Map a dataset episode index (e.g. 46) to a position in self.episodes."""
+        if start_episode is None:
+            return 0
+        for pos, ep in enumerate(self.episodes):
+            if ep.index == start_episode:
+                return pos
+        # Unknown index: validated in main(), but fall back to the first to be safe.
+        return 0
+
     def _goto(self, new_idx: int):
         new_idx = max(0, min(len(self.episodes) - 1, new_idx))
         if new_idx == self.idx and self.left_src is not None:
@@ -700,9 +716,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Show only the three camera feeds; skip metrics and MuJoCo entirely.",
     )
+    parser.add_argument(
+        "--episode",
+        type=int,
+        default=None,
+        help="Launch on this dataset episode index (e.g. 46) instead of the first.",
+    )
     args = parser.parse_args(argv)
 
     dataset = Dataset(args.dataset_root)
+
+    if args.episode is not None and args.episode not in {ep.index for ep in dataset.episodes}:
+        avail = sorted(ep.index for ep in dataset.episodes)
+        parser.error(
+            f"--episode {args.episode} not found (needs all three camera videos). "
+            f"Available indices: {avail[0]}..{avail[-1]} ({len(avail)} episodes)."
+        )
 
     app = QtWidgets.QApplication(sys.argv[:1])
     win = SelectorWindow(
@@ -711,6 +740,7 @@ def main(argv: list[str] | None = None) -> int:
         quat_order=args.quat_order,
         enable_sim=not args.no_sim and not args.cameras_only,
         enable_metrics=not args.cameras_only,
+        start_episode=args.episode,
     )
     win.show()
     return app.exec()
